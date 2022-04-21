@@ -2835,6 +2835,40 @@ class TestFunctionalize(TestCase):
             return x
         self._check_functionalize_correctness(f, torch.zeros(4, 2, device=device))
 
+    def test_functionalize_grad(self, device):
+
+        def f(x: torch.Tensor) -> torch.Tensor:
+            tmp = torch.ones(2, device=device)
+            y = x + x
+            z = y.view(4, 2)
+            y.add_(tmp)
+            return z.sum()
+
+        inpt1 = torch.ones(4, 2, device=device)
+        inpt2 = torch.ones(4, 2, device=device)
+        out1 = grad(f)(inpt1)
+        out2 = grad(functionalize(f))(inpt2)
+        self.assertEqual(out1, out2)
+        self.assertEqual(inpt1, inpt2)
+
+    def test_vmap_functionalize_jvp(self, device):
+
+        def f(x: torch.Tensor) -> torch.Tensor:
+            y = x + x
+            z = y.view(-1)
+            y.add_(1)
+            return z
+
+        def jvp_wrapper(x, t):
+            return jvp(f, (x,), (t,),)
+
+        x = torch.randn(2, 3, device=device)
+        t = torch.randn(2, 3, device=device)
+
+        out1 = vmap(jvp_wrapper)(x, t)
+        out2 = vmap(functionalize(jvp_wrapper))(x, t)
+        self.assertEqual(out1, out2)
+
     def test_functionalize_fx_simple(self, device):
 
         def f(x: torch.Tensor) -> torch.Tensor:

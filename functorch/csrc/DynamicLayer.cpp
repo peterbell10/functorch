@@ -465,9 +465,6 @@ static void checkForInvalidMutationOnCaptures(
     const c10::OperatorHandle& op,
     torch::jit::Stack* stack,
     const std::vector<DynamicLayer>& dynamicLayerStack) {
-  if (dynamicLayerStack.back().key() != DispatchKey::Autograd) {
-    return;
-  }
   if (!isInplaceOp(op.schema())) {
     return;
   }
@@ -544,20 +541,22 @@ void dynamicLayerFrontFallback(const c10::OperatorHandle& op, torch::jit::Stack*
   TORCH_INTERNAL_ASSERT(dynamicLayerStack.size() > 0);
   SaveLocalDispatchKeySet guard;
 
-  // if is a grad transform, and the operation is in-place, and the mutated
-  // argument is not currently wrapped in a TensorWrapper, then we need to
-  // error out otherwise the result is silently incorrect
-  checkForInvalidMutationOnCaptures(op, stack, dynamicLayerStack);
-
   // Unwrap dead GradWrappers, materialize live ones
   auto maybeTransformGradWrappers = [](const Tensor& tensor) {
     auto result = unwrapIfDead(tensor);
     return materializeGradWrappers(result, getDynamicLayerStack());
   };
-  auto num_args = op.schema().arguments().size();
-  foreachTensorInplace(*stack, stack->size() - num_args, stack->size(), maybeTransformGradWrappers);
 
+  auto num_args = op.schema().arguments().size();
   auto& layer = dynamicLayerStack.back();
+
+  // if is a grad transform, and the operation is in-place, and the mutated
+  // argument is not currently wrapped in a TensorWrapper, then we need to
+  // error out otherwise the result is silently incorrect
+  if (dynamicLayerStack.back().key() == DispatchKey::Autograd) {
+    checkForInvalidMutationOnCaptures(op, stack, dynamicLayerStack);
+    foreachTensorInplace(*stack, stack->size() - num_args, stack->size(), maybeTransformGradWrappers);
+  }
 
   DispatchKeySet exclude = keysToExcludeWhenEnteringDynamicLayer(layer.key());
   DispatchKeySet hacky_include;
